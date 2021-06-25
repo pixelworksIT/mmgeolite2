@@ -1,0 +1,108 @@
+#!/bin/bash
+#
+# Block clients not listed in ALLOW_COUNTIES
+#
+# Add rule with tcp_wrapper
+# Example:
+#   for RedHat/CentOS
+#     /etc/hosts.allow
+#         sshd : ALL : spawn /opt/mmgeolite2/bin/allow_country %a
+#   for Debian or similar, which has aclexec support
+#     /etc/hosts.allow
+#         sshd : ALL : aclexec /opt/mmgeolite2/bin/allow_country %a
+#     /etc/hosts.deny
+#         sshd : ALL
+#
+
+PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin
+LOG_TAG=$(basename $0)
+
+if [ -z "$1" ]; then
+    logger -t "$LOG_TAG" -p syslog.err "$0 <ip_address>"
+    exit 1
+fi
+
+logger -t "$LOG_TAG" -p authpriv.notice "Access from $1"
+
+MY_PATH=$(cd "$(dirname "$0")"; pwd -P)
+DB_PATH="$MY_PATH""/../db"
+MMDB="$DB_PATH""/GeoLite2-Country.mmdb"
+
+# Make sure mmdbinspect is installed
+CMD_INSPECT="$MY_PATH""/mmdbinspect"
+if ! [ -x "$CMD_INSPECT" ]; then
+    logger -t "$LOG_TAG" -p syslog.err "mmdbinspect is not available at $CMD_INSPECT"
+    exit 1
+fi
+
+# Make sure jq is installed
+CMD_JQ=$(which jq)
+if [ -z "$CMD_JQ" ]; then
+    logger -t "$LOG_TAG" -p syslog.err "jq is not available anywhere in $PATH"
+    exit 1
+fi
+
+# We need iptables or ip6tables on RedHat/CentOS or similar releases to work
+IPT_CHAIN="BLOCK_BY_COUNTRY_MMDB"
+ADDR_COLON=$(echo "$1" |grep ":")
+if [ -z "$ADDR_COLON" ]; then
+    CMD_IPTABLES=$(which iptables 2>/dev/null)
+else
+    CMD_IPTABLES=$(which ip6tables 2>/dev/null)
+fi
+if [ -x "$CMD_IPTABLES" ]; then
+    # Prepare a separated chain for blocking unallowed clients
+    # Try to list chain rules to check whether the chain exists or not
+    "$CMD_IPTABLES" -nL "$IPT_CHAIN"
+    if [ $? -ne 0 ]; then
+        # We need to create the chain here
+        "$CMD_IPTABLES" -N "$IPT_CHAIN"
+        # Redirect all unmatched INPUT to this chain
+        "$CMD_IPTABLES" -A INPUT -j "$IPT_CHAIN"
+    fi
+else
+    logger -t "$LOG_TAG" -p syslog.warning "iptables not available. This script may not work as expected."
+fi
+
+# /etc/mmgeolite2 is required
+if [ -f "/etc/mmgeolite2" ]; then
+    . "/etc/mmgeolite2"
+else
+    logger -t "$LOG_TAG" -p syslog.err "Cannot find config file /etc/mmgeolite2"
+    exit 1
+fi
+
+# Make sure ALLOW_COUNTRIES is defined
+if [ -z "$ALLOW_COUNTRIES" ]; then
+    logger -t "$LOG_TAG" -p authpriv.warning "No countries are allowed"
+    exit 1
+fi
+
+# Allow addresses that not in .mmdb
+ALLOW_COUNTRIES="$ALLOW_COUNTRIES"" null"
+
+# Query country iso_code in .mmdb
+host_country=$("$CMD_INSPECT" --db "$MMDB" $1 \
+    |jq -r '.[0] .Records[0] .Record .country .iso_code')
+logger -t "$LOG_TAG" -p authpriv.notice "$1 in $host_country"
+
+# Match ALLOW_COUNTRIES
+find_country=$(echo "$ALLOW_COUNTRIES" |grep "$host_country")
+
+if [ -z "$find_country" ]; then
+    # Try to use iptables to block traffic
+    if [ -x "$CMD_IPTABLES" ]; then
+        "$CMD_IPTABLES" -I "$IPT_CHAIN" 1 -s "$1" -j DROP
+        if [ $? -ne 0 ]; then
+            logger -t "$LOG_TAG" -p authpriv.err "iptables block failed."
+        fi
+    else
+        logger -t "$LOG_TAG" -p syslog.warning "iptables not available. This script may not work as expected."
+    fi
+
+    logger -t "$LOG_TAG" -p authpriv.err "Country check failed. Access denied. ($host_country)"
+    exit 1
+else
+    logger -t "$LOG_TAG" -p authpriv.notice "Country check succeeded. Access accepted ($host_country)"
+    exit 0
+fi

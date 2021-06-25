@@ -1,0 +1,43 @@
+#!/bin/bash
+#
+# Put this script in cron to update .mmdb regularly
+#
+
+MY_PATH=$(cd "$(dirname "$0")"; pwd -P)
+DB_PATH="$MY_PATH""/../db"
+
+# /etc/mmgeolite2 is required
+if [ -f "/etc/mmgeolite2" ]; then
+    . "/etc/mmgeolite2"
+else
+    echo "Cannot find config file /etc/mmgeolite2" >&2
+    exit 1
+fi
+
+# Make sure LICENSE_KEY is defined
+if [ -z "$LICENSE_KEY" ]; then
+    echo "LICENSE_KEY not defined" >&2
+    exit 1
+fi
+
+# Generate database download url
+MMDB_URL="https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=""$LICENSE_KEY""&suffix=tar.gz"
+
+# Clean up all old .mmdb in DB_PATH
+rm -f "$DB_PATH""/"*".mmdb"
+
+# Download database and extract to DB_PATH
+## Create temp work dir
+TMP_DIR=$(mktemp -d)
+cd "$TMP_DIR"
+## Download and extract
+curl -s "$MMDB_URL" -o "mmdb.tar.gz"
+tar -xzf "mmdb.tar.gz"
+## Copy .mmdb to DB_PATH
+cp "GeoLite2-Country_"*"/GeoLite2-Country.mmdb" "$DB_PATH"
+## Going back
+cd -
+## Remove temp work dir
+rm -rf "$TMP_DIR"
+
+exit

@@ -1,0 +1,9 @@
+# Copy or link this file to /etc/mmgeolite2
+# Make sure remove global read permission on this file
+# Get your free license key from maxmind.com and fill bellow
+LICENSE_KEY=""
+
+# When country iso_code is in following list, allow_country will exit 0
+# Otherwise, allow_country will use iptables to block the client IP and exit 1
+# Multiple ISO country code separate by space
+ALLOW_COUNTRIES=""

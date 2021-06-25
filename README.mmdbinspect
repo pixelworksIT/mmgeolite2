@@ -1,0 +1,5 @@
+Download mmdbinspect release from
+    https://github.com/maxmind/mmdbinspect/releases
+
+Only extract mmdbinspect executable file in ./bin folder
+and make sure it has execution permission.
